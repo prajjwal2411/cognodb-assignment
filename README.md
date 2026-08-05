@@ -1,23 +1,43 @@
-# CognoDB Take-Home Assignment
+# Skill & Career Path Navigator
 
-_Working title — replace with your actual project name once the use case is chosen._
+A graph-backed app for exploring how skills, jobs and people connect: what
+skills a target role requires, what career path leads there, and who else
+has a similar skill profile.
 
 ## Use case & "Why a graph database?"
 
-> TODO: Describe the real-world problem this app solves, and explain what a graph
-> model (nodes, relationships, multi-hop traversals) gains here over a relational
-> schema — e.g. queries that would require several JOINs or recursive CTEs in SQL
-> become simple, fast pattern matches in Cypher.
+Career growth is fundamentally a *connections* problem — which skills unlock
+which roles, which roles typically lead to which other roles, and who else
+in the network has an overlapping skill set. In a relational schema these
+questions require several self-joins or recursive CTEs (e.g. "find every
+path of next-roles from my current job to a target job" or "find people two
+skill-hops away who share 3+ skills with me"). In Cypher, both are simple,
+readable, variable-length pattern matches (`(:Job)-[:NEXT_ROLE*1..4]->(:Job)`),
+and they stay fast as the graph grows because traversal cost depends on the
+number of relationships touched, not full-table scans.
 
 ## Data model
 
-> TODO: Add a diagram (e.g. a Mermaid graph or an image) showing labeled node types,
-> relationship types, and key properties.
-
 ```mermaid
 graph LR
-  A[Person] -->|KNOWS| B[Person]
+  P[Person] -->|HAS_SKILL proficiency| S[Skill]
+  J[Job] -->|REQUIRES_SKILL importance| S
+  P -->|WORKED_AT role, years| C[Company]
+  S -->|LEADS_TO strength| S2[Skill]
+  J -->|NEXT_ROLE| J2[Job]
 ```
+
+**Nodes:** `Person {name, currentTitle}`, `Skill {name, category}`,
+`Job {title, level}`, `Company {name, industry}`
+
+**Relationships:**
+- `(Person)-[:HAS_SKILL {proficiency}]->(Skill)`
+- `(Job)-[:REQUIRES_SKILL {importance}]->(Skill)`
+- `(Person)-[:WORKED_AT {role, years}]->(Company)`
+- `(Skill)-[:LEADS_TO {strength}]->(Skill)` — natural "what to learn next" progression
+- `(Job)-[:NEXT_ROLE]->(Job)` — typical career-ladder step
+
+Seed data lives in `scripts/data.mjs` (24 skills, 13 jobs, 8 companies, 16 people).
 
 ## Tech stack
 
@@ -63,6 +83,10 @@ npm install
 ```bash
 npm run seed
 ```
+
+This clears any existing data in the instance and loads the Skill & Career Path
+Navigator dataset (skills, jobs, companies, people) from `scripts/data.mjs`.
+Safe to re-run any time.
 
 ### 5. Run the app
 
