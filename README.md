@@ -1,36 +1,88 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CognoDB Take-Home Assignment
 
-## Getting Started
+_Working title — replace with your actual project name once the use case is chosen._
 
-First, run the development server:
+## Use case & "Why a graph database?"
+
+> TODO: Describe the real-world problem this app solves, and explain what a graph
+> model (nodes, relationships, multi-hop traversals) gains here over a relational
+> schema — e.g. queries that would require several JOINs or recursive CTEs in SQL
+> become simple, fast pattern matches in Cypher.
+
+## Data model
+
+> TODO: Add a diagram (e.g. a Mermaid graph or an image) showing labeled node types,
+> relationship types, and key properties.
+
+```mermaid
+graph LR
+  A[Person] -->|KNOWS| B[Person]
+```
+
+## Tech stack
+
+- **Framework:** Next.js (App Router, TypeScript, Tailwind CSS)
+- **Database:** [CognoDB](https://console.cognodb.com) — managed graph database, speaks
+  openCypher over Bolt, accessed via the official `neo4j-driver` package.
+
+## Project structure
+
+```
+app/            Next.js routes (pages + API routes)
+api/health/   Health-check endpoint that verifies DB connectivity
+lib/neo4j.ts    Neo4j driver singleton + parameterised query helper
+scripts/seed.mjs  Seed script that loads sample data into CognoDB
+.env.example    Template for required environment variables (copy to .env)
+```
+
+## Setup
+
+### 1. Create your CognoDB instance
+
+1. Sign up at [console.cognodb.com/signup](https://console.cognodb.com/signup) (free tier, no credit card).
+2. Create a free `c0` instance and pick a region (provisions in under a minute).
+3. Save the connection URI (`bolt+s://<instance-id>.databases.cognodb.cloud`) and the
+   generated password for the `cognodb` user — it's shown only once.
+
+### 2. Configure environment variables
+
+```bash
+cp .env.example .env
+```
+
+Fill in `.env` with your CognoDB URI and password. **Never commit this file.**
+
+### 3. Install dependencies
+
+```bash
+npm install
+```
+
+### 4. Seed the database
+
+```bash
+npm run seed
+```
+
+### 5. Run the app
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Visit [http://localhost:3000](http://localhost:3000). Check `/api/health` to confirm
+the app can reach CognoDB.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Main queries
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+> TODO: List and explain the main Cypher queries once implemented, including the
+> multi-hop traversal and the query that would be awkward in a relational database.
 
-## Learn More
+## Screenshots
 
-To learn more about Next.js, take a look at the following resources:
+> TODO: Add UI screenshots here.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Deployment
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+> TODO: Add the hosted demo link and deployment notes (e.g. Vercel), and remember to
+> set the same environment variables in the hosting provider's dashboard.
