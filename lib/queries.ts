@@ -3,6 +3,11 @@ import { runQuery } from "./neo4j";
 /**
  * All Cypher lives here, one function per query, always parameterised.
  * API routes call these functions rather than embedding Cypher inline.
+ *
+ * The visiting user is NOT stored as a Person node — they pick their current
+ * role and skills through the UI, and those are passed straight into the
+ * queries below as an ephemeral profile. Only the seeded Person nodes exist
+ * in the graph; the visitor's own name is display-only.
  */
 
 export interface PersonSummary {
@@ -13,6 +18,11 @@ export interface PersonSummary {
 export interface JobSummary {
   title: string;
   level: string;
+}
+
+export interface SkillSummary {
+  name: string;
+  category: string;
 }
 
 export async function listPeople(): Promise<PersonSummary[]> {
@@ -31,6 +41,14 @@ export async function listJobs(): Promise<JobSummary[]> {
   );
 }
 
+export async function listSkills(): Promise<SkillSummary[]> {
+  return runQuery<SkillSummary>(
+    `MATCH (s:Skill)
+     RETURN s.name AS name, s.category AS category
+     ORDER BY s.category, s.name`
+  );
+}
+
 export interface CareerPathResult {
   found: boolean;
   path: { title: string; level: string }[];
@@ -39,22 +57,21 @@ export interface CareerPathResult {
 
 /**
  * Multi-hop traversal (2+ hops): the shortest chain of NEXT_ROLE steps from
- * a person's current job to a target job. Variable-length path matching like
- * this needs a recursive CTE (and a stop condition) in SQL; in Cypher it's
- * a single pattern.
+ * the visitor's current job to a target job. Variable-length path matching
+ * like this needs a recursive CTE (and a stop condition) in SQL; in Cypher
+ * it's a single pattern.
  */
 export async function getCareerPath(
-  personName: string,
+  currentTitle: string,
   targetJobTitle: string
 ): Promise<CareerPathResult> {
   const rows = await runQuery<{ titles: string[]; levels: string[] }>(
-    `MATCH (p:Person {name: $personName})
-     MATCH (start:Job {title: p.currentTitle})
+    `MATCH (start:Job {title: $currentTitle})
      MATCH (target:Job {title: $targetJobTitle})
      MATCH path = shortestPath((start)-[:NEXT_ROLE*1..6]->(target))
      RETURN [n IN nodes(path) | n.title] AS titles,
             [n IN nodes(path) | n.level] AS levels`,
-    { personName, targetJobTitle }
+    { currentTitle, targetJobTitle }
   );
 
   if (rows.length === 0) {
@@ -72,33 +89,28 @@ export interface SkillGapResult {
 }
 
 /**
- * Skills required by the target job that the person doesn't have yet, plus
- * a "what to learn next" suggestion: skills the person already has that lead
- * (via LEADS_TO) directly into one of the missing skills.
+ * Skills required by the target job that aren't in the visitor's chosen
+ * skill list, plus a "what to learn next" suggestion: skills they already
+ * have that lead (via LEADS_TO) directly into one of the missing skills.
  */
 export async function getSkillGap(
-  personName: string,
+  skills: string[],
   targetJobTitle: string
 ): Promise<SkillGapResult> {
   const missing = await runQuery<{ name: string; importance: number }>(
     `MATCH (j:Job {title: $targetJobTitle})-[r:REQUIRES_SKILL]->(s:Skill)
-     WHERE NOT EXISTS {
-       MATCH (:Person {name: $personName})-[:HAS_SKILL]->(s)
-     }
+     WHERE NOT s.name IN $skills
      RETURN s.name AS name, r.importance AS importance
      ORDER BY r.importance DESC`,
-    { personName, targetJobTitle }
+    { skills, targetJobTitle }
   );
 
   const suggestions = await runQuery<{ from: string; to: string; strength: number }>(
-    `MATCH (p:Person {name: $personName})-[:HAS_SKILL]->(have:Skill)
-     MATCH (have)-[l:LEADS_TO]->(missing:Skill)<-[:REQUIRES_SKILL]-(:Job {title: $targetJobTitle})
-     WHERE NOT EXISTS {
-       MATCH (p)-[:HAS_SKILL]->(missing)
-     }
+    `MATCH (have:Skill)-[l:LEADS_TO]->(missing:Skill)<-[:REQUIRES_SKILL]-(:Job {title: $targetJobTitle})
+     WHERE have.name IN $skills AND NOT missing.name IN $skills
      RETURN have.name AS from, missing.name AS to, l.strength AS strength
      ORDER BY l.strength DESC`,
-    { personName, targetJobTitle }
+    { skills, targetJobTitle }
   );
 
   return { missingSkills: missing, suggestedNextSkills: suggestions };
@@ -112,17 +124,17 @@ export interface SimilarPerson {
 }
 
 /**
- * People who share at least `minShared` skills with the given person
- * (excluding themselves). A same-table self-join + GROUP BY/HAVING in SQL;
- * a single pattern match with aggregation in Cypher.
+ * Seeded people who share at least `minShared` skills with the visitor's
+ * chosen skill list. A self-join + GROUP BY/HAVING in SQL; a single pattern
+ * match with aggregation in Cypher.
  */
 export async function getSimilarPeople(
-  personName: string,
+  skills: string[],
   minShared = 3
 ): Promise<SimilarPerson[]> {
   return runQuery<SimilarPerson>(
-    `MATCH (me:Person {name: $personName})-[:HAS_SKILL]->(s:Skill)<-[:HAS_SKILL]-(other:Person)
-     WHERE other.name <> $personName
+    `MATCH (s:Skill)<-[:HAS_SKILL]-(other:Person)
+     WHERE s.name IN $skills
      WITH other, collect(DISTINCT s.name) AS sharedSkills
      WHERE size(sharedSkills) >= $minShared
      RETURN other.name AS name,
@@ -130,7 +142,7 @@ export async function getSimilarPeople(
             size(sharedSkills) AS sharedSkillCount,
             sharedSkills
      ORDER BY sharedSkillCount DESC`,
-    { personName, minShared }
+    { skills, minShared }
   );
 }
 
@@ -141,28 +153,24 @@ export interface CompanyRecommendation {
 }
 
 /**
- * Companies the person hasn't worked at, where at least one "skill twin"
- * (someone sharing 2+ skills) currently works. A 3-hop pattern
- * (Person -> Skill <- Person -> Company) with an anti-join against the
- * person's own work history — the kind of query that turns into several
- * nested self-joins in a relational schema.
+ * Companies where at least one "skill twin" (a seeded person sharing 2+
+ * skills with the visitor's chosen skill list) currently works. A 3-hop
+ * pattern (Skill <- Person -> Company) — the kind of query that turns into
+ * several nested self-joins in a relational schema.
  */
 export async function getCompanyRecommendations(
-  personName: string,
+  skills: string[],
   minShared = 2
 ): Promise<CompanyRecommendation[]> {
   return runQuery<CompanyRecommendation>(
-    `MATCH (me:Person {name: $personName})-[:HAS_SKILL]->(s:Skill)<-[:HAS_SKILL]-(twin:Person)
-     WHERE twin.name <> $personName
+    `MATCH (s:Skill)<-[:HAS_SKILL]-(twin:Person)
+     WHERE s.name IN $skills
      WITH twin, count(DISTINCT s) AS shared
      WHERE shared >= $minShared
      MATCH (twin)-[:WORKED_AT]->(c:Company)
-     WHERE NOT EXISTS {
-       MATCH (:Person {name: $personName})-[:WORKED_AT]->(c)
-     }
      RETURN c.name AS company, c.industry AS industry,
             collect(DISTINCT twin.name) AS connectedVia
      ORDER BY size(connectedVia) DESC`,
-    { personName, minShared }
+    { skills, minShared }
   );
 }

@@ -27,3 +27,15 @@ export function withErrorHandling(
     );
   });
 }
+
+/**
+ * Parses a comma-separated `skills` query param (e.g. "React,Node.js") into
+ * a trimmed, non-empty string array. Returns [] if the param is missing.
+ */
+export function parseSkillsParam(value: string | null): string[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}

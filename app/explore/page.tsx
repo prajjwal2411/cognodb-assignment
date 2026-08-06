@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
-  PersonSummary,
   JobSummary,
+  SkillSummary,
   CareerPathResponse,
   SkillGapResponse,
   SimilarPerson,
@@ -21,24 +21,60 @@ async function fetchJson<T>(url: string): Promise<T> {
 }
 
 export default function ExplorePage() {
-  const [people, setPeople] = useState<PersonSummary[] | null>(null);
   const [jobs, setJobs] = useState<JobSummary[] | null>(null);
+  const [skills, setSkills] = useState<SkillSummary[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
 
-  const [selectedPerson, setSelectedPerson] = useState("");
-  const [selectedJob, setSelectedJob] = useState("");
+  const [name, setName] = useState("");
+  const [currentTitle, setCurrentTitle] = useState("");
+  const [targetJob, setTargetJob] = useState("");
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
 
+  // Load the reference lists once.
   useEffect(() => {
     Promise.all([
-      fetchJson<{ people: PersonSummary[] }>("/api/people"),
       fetchJson<{ jobs: JobSummary[] }>("/api/jobs"),
+      fetchJson<{ skills: SkillSummary[] }>("/api/skills"),
     ])
-      .then(([peopleRes, jobsRes]) => {
-        setPeople(peopleRes.people);
+      .then(([jobsRes, skillsRes]) => {
         setJobs(jobsRes.jobs);
+        setSkills(skillsRes.skills);
       })
       .catch((err) => setListError(err.message));
   }, []);
+
+  // When the current role changes, pre-fill the skill checklist with that
+  // role's required skills (reusing the skill-gap query with an empty skill
+  // list, which returns every skill the role requires). Still editable after.
+  useEffect(() => {
+    if (!currentTitle) return;
+    fetchJson<SkillGapResponse>(
+      `/api/skill-gap?targetJob=${encodeURIComponent(currentTitle)}`
+    )
+      .then((res) => setSelectedSkills(res.missingSkills.map((s) => s.name)))
+      .catch(() => {
+        /* Prefill is a convenience only — ignore failures here. */
+      });
+  }, [currentTitle]);
+
+  const skillsByCategory = useMemo(() => {
+    const groups: Record<string, SkillSummary[]> = {};
+    for (const skill of skills ?? []) {
+      groups[skill.category] ??= [];
+      groups[skill.category].push(skill);
+    }
+    return groups;
+  }, [skills]);
+
+  function toggleSkill(skillName: string) {
+    setSelectedSkills((prev) =>
+      prev.includes(skillName)
+        ? prev.filter((s) => s !== skillName)
+        : [...prev, skillName]
+    );
+  }
+
+  const profileReady = currentTitle !== "" && selectedSkills.length > 0;
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
@@ -46,9 +82,10 @@ export default function ExplorePage() {
         Skill &amp; Career Path Navigator
       </h1>
       <p className="mt-2 text-neutral-600 dark:text-neutral-400">
-        Pick a person and a target role to see the career path between them,
-        the skills they&apos;re missing, people with a similar skill set, and
-        companies worth exploring.
+        Tell us who you are, your current role and skills, and where
+        you&apos;d like to go — we&apos;ll show the career path, the skills
+        you&apos;re missing, people with a similar skill set, and companies
+        worth exploring.
       </p>
 
       {listError && (
@@ -57,41 +94,54 @@ export default function ExplorePage() {
         </div>
       )}
 
-      {!listError && (people === null || jobs === null) && (
-        <LoadingState label="Loading people and jobs..." />
+      {!listError && (jobs === null || skills === null) && (
+        <LoadingState label="Loading roles and skills..." />
       )}
 
-      {people && jobs && (
+      {jobs && skills && (
         <>
           <div className="mt-8 grid gap-4 sm:grid-cols-2">
             <label className="block">
               <span className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                You are
+                Your name
+              </span>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Jordan"
+                className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                Your current role
               </span>
               <select
                 className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
-                value={selectedPerson}
-                onChange={(e) => setSelectedPerson(e.target.value)}
+                value={currentTitle}
+                onChange={(e) => setCurrentTitle(e.target.value)}
               >
-                <option value="">Select a person...</option>
-                {people.map((p) => (
-                  <option key={p.name} value={p.name}>
-                    {p.name} — {p.currentTitle}
+                <option value="">Select your current role...</option>
+                {jobs.map((j) => (
+                  <option key={j.title} value={j.title}>
+                    {j.title}
                   </option>
                 ))}
               </select>
             </label>
 
-            <label className="block">
+            <label className="block sm:col-span-2">
               <span className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                Target role
+                Desired profession
               </span>
               <select
                 className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
-                value={selectedJob}
-                onChange={(e) => setSelectedJob(e.target.value)}
+                value={targetJob}
+                onChange={(e) => setTargetJob(e.target.value)}
               >
-                <option value="">Select a role...</option>
+                <option value="">Select a target role...</option>
                 {jobs.map((j) => (
                   <option key={j.title} value={j.title}>
                     {j.title}
@@ -101,21 +151,56 @@ export default function ExplorePage() {
             </label>
           </div>
 
-          {!selectedPerson && (
+          {currentTitle && (
+            <div className="mt-6">
+              <span className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                Your skills
+              </span>
+              <p className="mt-1 text-xs text-neutral-500">
+                Pre-filled from &quot;{currentTitle}&quot;&apos;s typical skills — feel free to adjust.
+              </p>
+              <div className="mt-3 grid gap-4 rounded-lg border border-neutral-200 p-4 sm:grid-cols-2 dark:border-neutral-800">
+                {Object.entries(skillsByCategory).map(([category, items]) => (
+                  <div key={category}>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                      {category}
+                    </p>
+                    <div className="mt-2 flex flex-col gap-1.5">
+                      {items.map((skill) => (
+                        <label
+                          key={skill.name}
+                          className="flex items-center gap-2 text-sm"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedSkills.includes(skill.name)}
+                            onChange={() => toggleSkill(skill.name)}
+                          />
+                          {skill.name}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!currentTitle && (
             <div className="mt-8">
               <EmptyState
-                title="Choose a person to get started"
-                description="Select yourself (or anyone) from the list above."
+                title="Choose your current role to get started"
+                description="Select your current role above — we'll suggest your typical skills automatically."
               />
             </div>
           )}
 
-          {selectedPerson && (
+          {profileReady && (
             <div className="mt-8 space-y-8">
-              <CareerPathSection person={selectedPerson} targetJob={selectedJob} />
-              <SkillGapSection person={selectedPerson} targetJob={selectedJob} />
-              <SimilarPeopleSection person={selectedPerson} />
-              <CompanyRecommendationsSection person={selectedPerson} />
+              <CareerPathSection currentTitle={currentTitle} targetJob={targetJob} />
+              <SkillGapSection skills={selectedSkills} targetJob={targetJob} />
+              <SimilarPeopleSection skills={selectedSkills} />
+              <CompanyRecommendationsSection skills={selectedSkills} />
             </div>
           )}
         </>
@@ -140,10 +225,10 @@ function SectionCard({
 }
 
 function CareerPathSection({
-  person,
+  currentTitle,
   targetJob,
 }: {
-  person: string;
+  currentTitle: string;
   targetJob: string;
 }) {
   const [data, setData] = useState<CareerPathResponse | null>(null);
@@ -158,19 +243,19 @@ function CareerPathSection({
     setLoading(true);
     setError(null);
     fetchJson<CareerPathResponse>(
-      `/api/career-path?person=${encodeURIComponent(person)}&targetJob=${encodeURIComponent(targetJob)}`
+      `/api/career-path?currentTitle=${encodeURIComponent(currentTitle)}&targetJob=${encodeURIComponent(targetJob)}`
     )
       .then(setData)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [person, targetJob]);
+  }, [currentTitle, targetJob]);
 
   return (
     <SectionCard title="Career path">
       {!targetJob && (
         <EmptyState
           title="Pick a target role"
-          description="Select a target role above to see the career-ladder path."
+          description="Select a desired profession above to see the career-ladder path."
         />
       )}
       {targetJob && loading && <LoadingState label="Finding the path..." />}
@@ -178,7 +263,7 @@ function CareerPathSection({
       {targetJob && !loading && !error && data && !data.found && (
         <EmptyState
           title="No path found"
-          description="There's no NEXT_ROLE chain connecting this person's current role to the target role within 6 hops."
+          description="There's no NEXT_ROLE chain connecting your current role to the target role within 6 hops."
         />
       )}
       {targetJob && !loading && !error && data?.found && (
@@ -203,10 +288,10 @@ function CareerPathSection({
 }
 
 function SkillGapSection({
-  person,
+  skills,
   targetJob,
 }: {
-  person: string;
+  skills: string[];
   targetJob: string;
 }) {
   const [data, setData] = useState<SkillGapResponse | null>(null);
@@ -221,19 +306,19 @@ function SkillGapSection({
     setLoading(true);
     setError(null);
     fetchJson<SkillGapResponse>(
-      `/api/skill-gap?person=${encodeURIComponent(person)}&targetJob=${encodeURIComponent(targetJob)}`
+      `/api/skill-gap?skills=${encodeURIComponent(skills.join(","))}&targetJob=${encodeURIComponent(targetJob)}`
     )
       .then(setData)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [person, targetJob]);
+  }, [skills, targetJob]);
 
   return (
     <SectionCard title="Skill gap">
       {!targetJob && (
         <EmptyState
           title="Pick a target role"
-          description="Select a target role above to see missing skills."
+          description="Select a desired profession above to see missing skills."
         />
       )}
       {targetJob && loading && <LoadingState label="Analysing skill gap..." />}
@@ -243,7 +328,7 @@ function SkillGapSection({
           {data.missingSkills.length === 0 ? (
             <EmptyState
               title="No skill gap!"
-              description="This person already has every skill required for the role."
+              description="You already have every skill required for this role."
             />
           ) : (
             <ul className="space-y-2">
@@ -276,7 +361,7 @@ function SkillGapSection({
   );
 }
 
-function SimilarPeopleSection({ person }: { person: string }) {
+function SimilarPeopleSection({ skills }: { skills: string[] }) {
   const [data, setData] = useState<SimilarPerson[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -285,12 +370,12 @@ function SimilarPeopleSection({ person }: { person: string }) {
     setLoading(true);
     setError(null);
     fetchJson<{ people: SimilarPerson[] }>(
-      `/api/similar-people?person=${encodeURIComponent(person)}`
+      `/api/similar-people?skills=${encodeURIComponent(skills.join(","))}`
     )
       .then((res) => setData(res.people))
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [person]);
+  }, [skills]);
 
   return (
     <SectionCard title="People with a similar skill set">
@@ -299,7 +384,7 @@ function SimilarPeopleSection({ person }: { person: string }) {
       {!loading && !error && data && data.length === 0 && (
         <EmptyState
           title="No close matches"
-          description="Nobody else in the graph shares 3 or more skills with this person yet."
+          description="Nobody in the graph shares 3 or more of your skills yet."
         />
       )}
       {!loading && !error && data && data.length > 0 && (
@@ -319,7 +404,7 @@ function SimilarPeopleSection({ person }: { person: string }) {
   );
 }
 
-function CompanyRecommendationsSection({ person }: { person: string }) {
+function CompanyRecommendationsSection({ skills }: { skills: string[] }) {
   const [data, setData] = useState<CompanyRecommendation[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -328,12 +413,12 @@ function CompanyRecommendationsSection({ person }: { person: string }) {
     setLoading(true);
     setError(null);
     fetchJson<{ companies: CompanyRecommendation[] }>(
-      `/api/company-recommendations?person=${encodeURIComponent(person)}`
+      `/api/company-recommendations?skills=${encodeURIComponent(skills.join(","))}`
     )
       .then((res) => setData(res.companies))
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [person]);
+  }, [skills]);
 
   return (
     <SectionCard title="Companies worth exploring">

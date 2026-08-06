@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSimilarPeople } from "@/lib/queries";
-import { withErrorHandling } from "@/lib/api-helpers";
+import { withErrorHandling, parseSkillsParam } from "@/lib/api-helpers";
 
-// GET /api/similar-people?person=<name>&minShared=<number>
+// GET /api/similar-people?skills=<comma-separated skill names>&minShared=<number>
 export async function GET(request: NextRequest) {
   return withErrorHandling(async () => {
-    const person = request.nextUrl.searchParams.get("person");
+    const skills = parseSkillsParam(request.nextUrl.searchParams.get("skills"));
     const minSharedParam = request.nextUrl.searchParams.get("minShared");
     const minShared = minSharedParam ? Number(minSharedParam) : 3;
 
-    if (!person) {
+    if (skills.length === 0) {
       return NextResponse.json(
-        { error: "Query param 'person' is required." },
+        { error: "Query param 'skills' is required." },
         { status: 400 }
       );
     }
@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const people = await getSimilarPeople(person, minShared);
+    const people = await getSimilarPeople(skills, minShared);
     return NextResponse.json({ people });
   });
 }

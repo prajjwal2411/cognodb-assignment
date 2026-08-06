@@ -11,6 +11,11 @@ export interface JobSummary {
   level: string;
 }
 
+export interface SkillSummary {
+  name: string;
+  category: string;
+}
+
 export interface CareerPathResponse {
   found: boolean;
   path: { title: string; level: string }[];
