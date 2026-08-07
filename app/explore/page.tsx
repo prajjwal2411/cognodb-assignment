@@ -66,6 +66,20 @@ export default function ExplorePage() {
     return groups;
   }, [skills]);
 
+  // A person's target role can't be the same as their current role.
+  const targetJobOptions = useMemo(
+    () => (jobs ?? []).filter((j) => j.title !== currentTitle),
+    [jobs, currentTitle]
+  );
+
+  // If the current role changes to match the already-selected target role,
+  // clear the target role so the two never stay in sync.
+  useEffect(() => {
+    if (currentTitle && targetJob === currentTitle) {
+      setTargetJob("");
+    }
+  }, [currentTitle, targetJob]);
+
   function toggleSkill(skillName: string) {
     setSelectedSkills((prev) =>
       prev.includes(skillName)
@@ -142,12 +156,17 @@ export default function ExplorePage() {
                 onChange={(e) => setTargetJob(e.target.value)}
               >
                 <option value="">Select a target role...</option>
-                {jobs.map((j) => (
+                {targetJobOptions.map((j) => (
                   <option key={j.title} value={j.title}>
                     {j.title}
                   </option>
                 ))}
               </select>
+              {currentTitle && (
+                <p className="mt-1 text-xs text-neutral-500">
+                  &quot;{currentTitle}&quot; is excluded since it&apos;s your current role.
+                </p>
+              )}
             </label>
           </div>
 
