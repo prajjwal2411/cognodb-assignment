@@ -49,11 +49,31 @@ Seed data lives in `scripts/data.mjs` (24 skills, 13 jobs, 8 companies, 16 peopl
 
 ```
 app/            Next.js routes (pages + API routes)
-api/health/   Health-check endpoint that verifies DB connectivity
+  api/health/   Health-check endpoint that verifies DB connectivity
+  api/people/   Lists seeded people (used by similar-people/company results)
+  api/jobs/     Lists jobs, used to populate role dropdowns
+  api/skills/   Lists skills, used to populate the skill checklist
+  api/career-path/            Multi-hop NEXT_ROLE traversal
+  api/skill-gap/              Missing skills + learning suggestions
+  api/similar-people/         Shared-skill people search
+  api/company-recommendations/ Company recommendations via "skill twins"
+  explore/      The main interactive UI page
 lib/neo4j.ts    Neo4j driver singleton + parameterised query helper
-scripts/seed.mjs  Seed script that loads sample data into CognoDB
+lib/queries.ts  All Cypher queries, one function per query
+lib/api-helpers.ts  Shared error-handling + query-param parsing for routes
+scripts/data.mjs  Seed dataset (skills, jobs, companies, people)
+scripts/seed.mjs  Seed script that loads scripts/data.mjs into CognoDB
 .env.example    Template for required environment variables (copy to .env)
 ```
+
+### How a visitor's profile works
+
+The app doesn't require you to be one of the seeded people. On `/explore` you
+enter your name (display only), pick your current role and adjust your
+skills (pre-filled from that role's typical requirements), and pick a target
+role. That profile is **never written to CognoDB** — it's passed straight
+into the Cypher queries as parameters, and matched against the seeded
+`Job`/`Skill`/`Person`/`Company` graph in read-only queries.
 
 ## Setup
 
@@ -99,14 +119,93 @@ the app can reach CognoDB.
 
 ## Main queries
 
-> TODO: List and explain the main Cypher queries once implemented, including the
-> multi-hop traversal and the query that would be awkward in a relational database.
+All queries live in `lib/queries.ts` and are called with the official
+`neo4j-driver`'s parameterised `session.run(cypher, params)` — never
+string-concatenated.
+
+### 1. Career path (multi-hop traversal, 2+ hops)
+
+```cypher
+MATCH (start:Job {title: $currentTitle})
+MATCH (target:Job {title: $targetJobTitle})
+MATCH path = shortestPath((start)-[:NEXT_ROLE*1..6]->(target))
+RETURN [n IN nodes(path) | n.title] AS titles,
+       [n IN nodes(path) | n.level] AS levels
+```
+Finds the shortest chain of `NEXT_ROLE` steps from your current job to your
+target job (e.g. *Junior Backend Engineer → Backend Engineer → Senior Backend
+Engineer → Staff Engineer*). Variable-length path matching like this needs a
+recursive CTE with a stop condition in SQL; in Cypher it's one pattern.
+
+### 2. Skill gap + learning suggestions
+
+```cypher
+MATCH (j:Job {title: $targetJobTitle})-[r:REQUIRES_SKILL]->(s:Skill)
+WHERE NOT s.name IN $skills
+RETURN s.name AS name, r.importance AS importance
+ORDER BY r.importance DESC
+```
+plus a second query that walks `LEADS_TO` from skills you already have into
+missing skills, to suggest what to learn next. Reused cleverly on the
+frontend: calling it with an empty `skills` list returns *all* of a role's
+required skills, which is how the skill checklist gets pre-filled.
+
+### 3. People with a similar skill set
+
+```cypher
+MATCH (s:Skill)<-[:HAS_SKILL]-(other:Person)
+WHERE s.name IN $skills
+WITH other, collect(DISTINCT s.name) AS sharedSkills
+WHERE size(sharedSkills) >= $minShared
+RETURN other.name AS name, other.currentTitle AS currentTitle,
+       size(sharedSkills) AS sharedSkillCount, sharedSkills
+ORDER BY sharedSkillCount DESC
+```
+Finds seeded people sharing 3+ skills with your chosen skill list. In SQL
+this is a self-join on a `person_skills` table plus a `GROUP BY`/`HAVING` —
+here it's a single pattern with aggregation.
+
+### 4. Company recommendations (the relational-awkward one)
+
+```cypher
+MATCH (s:Skill)<-[:HAS_SKILL]-(twin:Person)
+WHERE s.name IN $skills
+WITH twin, count(DISTINCT s) AS shared
+WHERE shared >= $minShared
+MATCH (twin)-[:WORKED_AT]->(c:Company)
+RETURN c.name AS company, c.industry AS industry,
+       collect(DISTINCT twin.name) AS connectedVia
+ORDER BY size(connectedVia) DESC
+```
+A 3-hop "friend-of-friend through skills through people through companies"
+pattern: find companies where a "skill twin" (someone sharing 2+ skills)
+works. In a relational schema this needs nested self-joins across
+person/skill and person/company junction tables — in Cypher it's a
+two-line traversal.
 
 ## Screenshots
 
-> TODO: Add UI screenshots here.
+**Landing page**
+![Landing page](public/screenshots/home-page.jpeg)
+
+**Explore page — building your profile**
+![Explore page](public/screenshots/explore-page.jpeg)
+
+**Entering your name, current role and skills**
+![Profile input](public/screenshots/user-input-part.jpeg)
+
+**Career path, skill gap, similar people & company recommendations**
+![Career path and results](public/screenshots/career-path-and-job-hops.jpeg)
 
 ## Deployment
 
-> TODO: Add the hosted demo link and deployment notes (e.g. Vercel), and remember to
-> set the same environment variables in the hosting provider's dashboard.
+**Live demo:** https://cognodb-assignment-6nft.vercel.app/
+
+Deployed on [Vercel](https://vercel.com)'s free tier. To redeploy your own
+copy:
+
+1. Import this GitHub repo into Vercel (auto-detected as Next.js).
+2. In Project Settings → Environment Variables, add `COGNODB_URI`,
+   `COGNODB_USER`, and `COGNODB_PASSWORD` for the Production environment
+   (same values as your local `.env`).
+3. Deploy, then confirm `/api/health` returns `{"connected": true}`.
